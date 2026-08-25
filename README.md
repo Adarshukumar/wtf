@@ -10,8 +10,12 @@ See [`RESEARCH.md`](./RESEARCH.md) for the full reverse-engineering write-up.
 
 | File | What it is |
 |---|---|
-| `perchance.py` | The client. Has a CLI: `get-key`, `gen`, `train`, `status`. |
+| `perchance.py` | The single-user client. CLI: `get-key`, `gen`, `train`, `status`. |
 | `test_perchance.py` | 18 unit tests, all passing. No network required. |
+| `multi_proxy.py` | The **multi-user farm**. CLI: `extract`, `healthcheck`, `farm`, `simulate`, `status`. Uses the [proxy-miner](https://github.com/Adarshukumar/RepopoxRev/tree/main/proxy-miner) SQLite DB to source proxies, then runs N "users" (one per proxy) to acquire N distinct `userKey`s. |
+| `test_multi_proxy.py` | 14 unit tests, all passing. Reads the real proxy-miner DB to verify extraction, runs the offline bandit simulation. |
+| `proxies.txt` | 50 extracted proxies (one `ip:port` per line). |
+| `proxies.json` | Same 50 proxies, with full metadata (country, protocols, anonymity, etc.). |
 | `RESEARCH.md` | Full analysis of the HAR — every endpoint, every header, the userKey lifecycle. |
 | `perchance.org.json` | The original 28 MB HAR. |
 
@@ -21,7 +25,7 @@ See [`RESEARCH.md`](./RESEARCH.md) for the full reverse-engineering write-up.
 # 1. install
 pip install --break-system-packages curl_cffi
 
-# 2. try to grab a userKey
+# 2. (single-user) try to grab a userKey
 python3 perchance.py get-key
 
 # 3. (or, train the policy against the live API)
@@ -32,6 +36,25 @@ python3 perchance.py gen "a cute boy" out.jpg
 
 # 5. inspect learned state
 python3 perchance.py status
+```
+
+## Multi-user farm (using proxy-miner proxies)
+
+```bash
+# 1. Extract 50 proxies from the proxy-miner DB
+python3 multi_proxy.py extract --count 50 --out proxies.txt
+
+# 2. (Production only) Health-check them — drops dead ones
+python3 multi_proxy.py healthcheck --in proxies.txt --out live_proxies.json
+
+# 3. Farm 20 distinct userKeys (one per user, one per proxy)
+python3 multi_proxy.py farm --users 20
+
+# 4. (Optional) Prove the bandit works offline
+python3 multi_proxy.py simulate --users 20
+
+# 5. Show what we got
+python3 multi_proxy.py status
 ```
 
 ## The architecture (deep)
@@ -105,4 +128,7 @@ python3 perchance.py status
 ```bash
 python3 test_perchance.py -v
 # Ran 18 tests in 0.013s — OK
+
+python3 test_multi_proxy.py -v
+# Ran 14 tests in 0.356s — OK
 ```
