@@ -597,6 +597,63 @@ PRECONNECT_RE = re.compile(
 )
 
 
+# =============================================================================
+# Header helpers (work with dict, CaseInsensitiveDict, or any .items() object)
+# =============================================================================
+
+
+def _is_redirect(response: Any) -> bool:
+    """True if the response is an HTTP redirect (3xx with a Location header).
+    curl_cffi's Response doesn't have .is_redirect, so we check ourselves."""
+    try:
+        sc = getattr(response, "status_code", 0)
+    except Exception:
+        return False
+    if not (300 <= sc < 400):
+        return False
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return False
+    try:
+        for k, v in (headers.items() if hasattr(headers, "items") else []):
+            if k.lower() == "location" and v:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _get_header(headers: Any, name: str, default: str = "") -> str:
+    """Case-insensitive header lookup. Works with dict, CaseInsensitiveDict,
+    or anything with .get()."""
+    if headers is None:
+        return default
+    try:
+        v = headers.get(name)
+        if v is not None:
+            return v
+    except Exception:
+        pass
+    name_lower = name.lower()
+    try:
+        for k, v in (headers.items() if hasattr(headers, "items") else []):
+            if k.lower() == name_lower:
+                return v
+    except Exception:
+        pass
+    return default
+
+
+def _header_pairs(headers: Any) -> list[tuple[str, str]]:
+    """Return all (k, v) pairs from a headers object, regardless of type."""
+    if headers is None:
+        return []
+    try:
+        return list(headers.items())
+    except Exception:
+        return []
+
+
 def extract_resources(html: str) -> dict[str, list[str]]:
     return {
         "scripts": list(set(SCRIPT_RE.findall(html))),
@@ -683,12 +740,14 @@ class DeepDriver:
         self.visited.add(url)
 
         # Follow redirects manually
+        # (curl_cffi's Response doesn't have .is_redirect; check via
+        #  status code + Location header the standard way)
         hops = 0
-        while r.is_redirect and hops < 10:
+        while _is_redirect(r) and hops < 10:
             self.log.response(method, url, r.status_code,
                               len(r.content), dt_ms,
                               dict(r.headers), r.text, note="redirect")
-            new_url = r.headers.get("Location", "")
+            new_url = _get_header(r.headers, "Location", "")
             if not new_url:
                 break
             if new_url.startswith("/"):
@@ -748,11 +807,7 @@ class DeepDriver:
             return
 
         # Parse for sub-resources
-        ct = ""
-        for k, v in (r.headers.items() if hasattr(r.headers, "items") else []):
-            if k.lower() == "content-type":
-                ct = v
-                break
+        ct = _get_header(r.headers, "Content-Type", "")
         if "html" in ct.lower():
             html = r.text or ""
             res = extract_resources(html)
@@ -783,7 +838,7 @@ class DeepDriver:
             self.log.info(f"  → {kind}: {sub[:120]}")
             r2 = self._do("GET", sub)
             if r2 is not None:
-                cts = (r2.headers.get("Content-Type") or "").split(";")[0]
+                cts = (_get_header(r2.headers, "Content-Type") or "").split(";")[0]
                 self.log.info(f"    ← {r2.status_code} {cts or '?'} "
                               f"{_fmt_size(len(r2.content))}")
 

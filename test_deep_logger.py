@@ -12,8 +12,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+# Force UTF-8 on Windows so the test file reads/writes work
+# even when HTML contains Unicode (🎨, 漢字, etc).
+try:
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore
+    sys.stderr.reconfigure(encoding="utf-8")  # type: ignore
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).parent))
 import deep_logger  # noqa: E402
+
+
+def _read(path: Path) -> str:
+    """Read a file as UTF-8 (works on Windows where default is cp1252)."""
+    return path.read_text(encoding="utf-8")
 
 
 class TestNetEvent(unittest.TestCase):
@@ -83,7 +96,7 @@ class TestEventLog(unittest.TestCase):
             log.request("GET", "https://example.com")
             log.write_html()
             self.assertTrue(out.exists())
-            content = out.read_text()
+            content = out.read_text(encoding="utf-8")
             self.assertIn("deep_logger.py", content)
             self.assertIn("hello", content)
             self.assertIn("REQUEST", content)
@@ -98,11 +111,90 @@ class TestEventLog(unittest.TestCase):
                           "set-cookie": "sid=abc123"},
                          "<html>body</html>")
             log.write_html()
-            content = out.read_text()
+            content = out.read_text(encoding="utf-8")
             self.assertIn("Response headers", content)
             self.assertIn("Body preview", content)
             self.assertIn("set-cookie", content)
             self.assertIn("text/html", content)
+
+    def test_html_export_handles_unicode(self):
+        """Make sure Unicode chars in events don't break the HTML read on Windows."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "log.html"
+            log = deep_logger.EventLog(html_path=out, console=False)
+            log.info("🎨 unicode: ┌──┐ 漢字 ñ ümlaut")
+            log.write_html()
+            content = out.read_text(encoding="utf-8")
+            self.assertIn("🎨", content)
+            self.assertIn("漢字", content)
+
+
+class TestHeaderHelpers(unittest.TestCase):
+    """Make sure the case-insensitive header helpers work with whatever
+    curl_cffi / requests / mock hands us."""
+
+    def test_is_redirect_3xx_with_location(self):
+        class _R:
+            status_code = 302
+            headers = {"Location": "https://x.com/"}
+        self.assertTrue(deep_logger._is_redirect(_R()))
+
+    def test_is_redirect_3xx_without_location(self):
+        class _R:
+            status_code = 302
+            headers = {}
+        self.assertFalse(deep_logger._is_redirect(_R()))
+
+    def test_is_redirect_200(self):
+        class _R:
+            status_code = 200
+            headers = {"Location": "https://x.com/"}
+        self.assertFalse(deep_logger._is_redirect(_R()))
+
+    def test_is_redirect_curl_cffi_case_insensitive(self):
+        """curl_cffi uses CaseInsensitiveDict — make sure it works."""
+        class _CID:
+            def __init__(self, d):
+                self._d = {k.lower(): v for k, v in d.items()}
+            def items(self):
+                return [(k, v) for k, v in self._d.items()]
+        class _R:
+            status_code = 301
+            headers = _CID({"LOCATION": "https://x.com/"})
+        self.assertTrue(deep_logger._is_redirect(_R()))
+
+    def test_is_redirect_no_headers(self):
+        class _R:
+            status_code = 200
+            headers = None
+        self.assertFalse(deep_logger._is_redirect(_R()))
+
+    def test_is_redirect_doesnt_crash_on_no_response_attrs(self):
+        """Real curl_cffi Response can lack .is_redirect — make sure we
+        don't crash when the attribute is missing entirely."""
+        # Mimic a real curl_cffi Response: has status_code and headers,
+        # but no .is_redirect attribute at all.
+        class _R:
+            status_code = 200
+            headers = {"content-type": "text/html"}
+        # This is what triggered the original bug
+        self.assertFalse(hasattr(_R(), "is_redirect"))
+        self.assertFalse(deep_logger._is_redirect(_R()))
+
+    def test_get_header_case_insensitive(self):
+        h = {"Content-Type": "text/html"}
+        self.assertEqual(deep_logger._get_header(h, "content-type"), "text/html")
+        self.assertEqual(deep_logger._get_header(h, "CONTENT-TYPE"), "text/html")
+        self.assertEqual(deep_logger._get_header(h, "x-other"), "")
+
+    def test_get_header_handles_none(self):
+        self.assertEqual(deep_logger._get_header(None, "x"), "")
+
+    def test_header_pairs(self):
+        h = {"A": "1", "B": "2"}
+        pairs = deep_logger._header_pairs(h)
+        self.assertEqual(set(pairs), {("A", "1"), ("B", "2")})
+        self.assertEqual(deep_logger._header_pairs(None), [])
 
 
 class TestFingerprintDetection(unittest.TestCase):
@@ -181,7 +273,7 @@ class TestHtmlRefresher(unittest.TestCase):
             stop.set()
             t.join(timeout=2)
             self.assertTrue(out.exists())
-            content = out.read_text()
+            content = out.read_text(encoding="utf-8")
             # The file should have at least the later events
             self.assertIn("update2", content)
 
@@ -241,6 +333,27 @@ class TestRunWithMock(unittest.TestCase):
             self.assertTrue(any("app.js" in u for u in urls),
                             f"app.js not in: {urls[:5]}")
             self.assertTrue(any("imageapi" in u for u in urls))
+
+    def test_redirect_following_works(self):
+        """Directly exercise _is_redirect + _get_header the way _do() does
+        on a real curl_cffi.Response (no .is_redirect attribute)."""
+        # Build a Response-shaped object WITHOUT .is_redirect — like real curl_cffi.
+        class _ResponseLike:
+            def __init__(self, status, location=None):
+                self.status_code = status
+                self.headers = ({"Location": location}
+                                if location else {"content-type": "text/html"})
+                self.text = "<html>ok</html>"
+                self.content = b"<html>ok</html>"
+
+        r1 = _ResponseLike(302, "https://final.example.com/page")
+        # The bug: this would have raised AttributeError on real curl_cffi.
+        self.assertTrue(deep_logger._is_redirect(r1))
+        self.assertEqual(deep_logger._get_header(r1.headers, "Location"),
+                         "https://final.example.com/page")
+
+        r2 = _ResponseLike(200)
+        self.assertFalse(deep_logger._is_redirect(r2))
 
     def test_iframe_phase_uses_userkey(self):
         """Verify the iframe replay makes a verifyUser call and gets a userKey."""
