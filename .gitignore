@@ -44,3 +44,5 @@ htmlcov/
 
 # Perchance client runtime cache (user-specific, do not commit)
 .perchance_client/
+logs.jsonl
+*.log
