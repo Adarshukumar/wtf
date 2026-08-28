@@ -1,0 +1,227 @@
+```
+ ╭─ ✓ ── σ Adarsh Kumar ━ ~/Desktop/CMF ━ 22:45:33
+ ╰─➤  D:/APPLICATIONS/PYTHON/python.exe "c:/Users/Adarsh Kumar/Desktop/CMF/wtf/deep_logger.py"
+22:45:35.492       INFO  Starting deep replay
+22:45:35.492       INFO  Target: https://perchance.org/imageapi?prompt=a%20cute%20booy
+22:45:35.492       INFO  Fingerprint: chrome131
+22:45:35.506       INFO  CA bundle: D:\APPLICATIONS\PYTHON\Lib\site-packages\certifi\cacert.pem
+22:45:35.514       INFO  ──────────────────────────────────────────────────────────────────────────────
+22:45:35.514       INFO  PHASE 1: main page
+22:45:35.514    REQUEST  GET     https://perchance.org/imageapi?prompt=a%20cute%20booy
+22:45:38.921   RESPONSE  200    79.1KB  3407.0ms  https://perchance.org/imageapi?prompt=a%20cute%20booy
+                                      content-type: text/html; charset=utf-8
+                                      x-frame-options: sameorigin
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f57bfab554d1-DEL
+                                      body: <!DOCTYPE html>\n<html class="no-js" lang="">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="x-ua-compatible" content="ie=edge">\n<title>imageapi ― Perchance Generator</title>\n<meta name="descri…
+22:45:38.921       INFO    page: 80,915 chars, 2 scripts, 5 links, 0 images, 2 iframes, 1 prefetch, 1 preconnect
+22:45:38.921       INFO  PHASE 2: sub-resources
+22:45:38.921       INFO    total: 11
+22:45:38.921       INFO    → scripts: https://www.googletagmanager.com/gtag/js?id=G-YJWJRNESS5
+22:45:38.921    REQUEST  GET     https://www.googletagmanager.com/gtag/js?id=G-YJWJRNESS5
+22:45:39.350   RESPONSE  200   445.5KB   421.0ms  https://www.googletagmanager.com/gtag/js?id=G-YJWJRNESS5
+                                      content-type: application/javascript; charset=UTF-8
+                                      strict-transport-security: max-age=31536000; includeSubDomains
+                                      server: Google Tag Manager
+                                      content-length: 158188
+                                      body: \n// Copyright 2012 Google Inc. All rights reserved.\n \n(function(){\n\nvar data = {\n"resource": {\n  "version":"1",\n  \n  "macros":[{"function":"__c","vtp_value":true},{"function":"__e"},{"functi…
+22:45:39.375       INFO      ← 200 application/javascript 445.5KB
+22:45:39.375       INFO    → scripts: https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925
+22:45:39.380    REQUEST  GET     https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925
+22:45:39.515   RESPONSE  200    27.8KB    93.0ms  https://static.cloudflareinsights.com/beacon.min.js/v3d52b47920f24c319d37e2661827c42b1787588026925
+                                      content-type: text/javascript;charset=UTF-8
+                                      server: cloudflare
+                                      cf-ray: a324f5936b349387-DEL
+                                      body: (()=>{var t={116:(t,e)=>{"use strict";Object.defineProperty(e,"__esModule",{value:!0}),e.cleanLocation=function(t){if(!t)return t;try{const e=new URL(t);return e.username="",e.password="",e.hash="",e…
+22:45:39.539       INFO      ← 200 text/javascript 27.8KB
+22:45:39.559       INFO    → links: apple-touch-icon.png
+22:45:39.559    REQUEST  GET     apple-touch-icon.png
+22:45:39.718      ERROR  apple-touch-icon.png
+                                      DNSError: Failed to perform, curl: (6) Could not resolve host: apple-touch-icon.png. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+22:45:39.813       INFO    → links: https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org
+22:45:39.813    REQUEST  GET     https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org
+22:45:41.011   RESPONSE  404     1.4KB  1187.0ms  https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: BYPASS
+                                      server: cloudflare
+                                      cf-ray: a324f5989bc794e8-DEL
+                                      body: <!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /</pre>\n<script>(function(){function c(){var b=a.contentDocument||(a.content…
+22:45:41.011       INFO      ← 404 text/html 1.4KB
+22:45:41.011       INFO    → links: https://perchance.org/favicon-16x16-white-bg.png
+22:45:41.011    REQUEST  GET     https://perchance.org/favicon-16x16-white-bg.png
+22:45:41.191   RESPONSE  200      606B   172.0ms  https://perchance.org/favicon-16x16-white-bg.png
+                                      content-type: image/png
+                                      content-length: 606
+                                      cf-cache-status: HIT
+                                      server: cloudflare
+                                      cf-ray: a324f59cebf754d1-DEL
+                                      body: �PNG\r\n\n\rIHD(-SsRGB��,   pHYs
+
+                                                                            ���PLTENNN��������������������η����檪�������                        ������999UUU������***JJJ���������…
+22:45:41.191       INFO      ← 200 image/png 606B
+22:45:41.191       INFO    → links: https://perchance.org/favicon-32x32-white-bg.png
+22:45:41.191    REQUEST  GET     https://perchance.org/favicon-32x32-white-bg.png
+22:45:41.372   RESPONSE  200      894B   188.0ms  https://perchance.org/favicon-32x32-white-bg.png
+                                      content-type: image/png
+                                      content-length: 894
+                                      cf-cache-status: HIT
+                                      server: cloudflare
+                                      cf-ray: a324f59e0ce254d1-DEL
+                                      body: �PNG\r\n\n\rIHDR D���sRGB��,        pHYs
+
+                                                                                    ��YPLTE!!!"""������
+
+
+                                                                                                       ������
+
+
+                                                                                                             ������aaa��������숈�bbb������WWW---������///UUU�����������������̂��…
+22:45:41.372       INFO      ← 200 image/png 894B
+22:45:41.372       INFO    → links: https://perchance.org/lib/perchance-engine-491bf81418aa4b69.js
+22:45:41.372    REQUEST  GET     https://perchance.org/lib/perchance-engine-491bf81418aa4b69.js
+22:45:42.027   RESPONSE  200   112.7KB   656.0ms  https://perchance.org/lib/perchance-engine-491bf81418aa4b69.js
+                                      content-type: text/javascript; charset=utf-8
+                                      content-length: 23823
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f59f1da354d1-DEL
+                                      body: {const PERCH2=window.PERCH;let textTransformNames2=[];PERCH2.addNodeMethods=function(node){Object.defineProperty(node,"$odds",{get:PERCH2.$oddsMethod,configurable:!0}),Object.defineProperty(node,"get…
+22:45:42.027       INFO      ← 200 text/javascript 112.7KB
+22:45:42.027       INFO    → iframes: https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org/imageapi?__generatorLastEditTime=1735532079534
+22:45:42.027    REQUEST  GET     https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org/imageapi?__generatorLastEditTime=1735532079534
+22:45:44.172   RESPONSE  200   157.9KB  2141.0ms  https://7be8a4f14d1cac8538b50440e3235b4b.perchance.org/imageapi?__generatorLastEditTime=1735532079534
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5a33dd394e8-DEL
+                                      body: <!DOCTYPE html>\n<html>\n<head>\n<title>Perchance</title>\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="robots" content="noindex, nofollow" />\n<base href="https:…
+22:45:44.172       INFO      ← 200 text/html 157.9KB
+22:45:44.172       INFO    → iframes: ${url.toString()}
+22:45:44.172    REQUEST  GET     ${url.toString()}
+22:45:44.172      ERROR  ${url.toString()}
+                                      InvalidURL: Failed to perform, curl: (3) URL rejected: Bad hostname. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.
+22:45:44.172       INFO  PHASE 3: known API endpoints
+22:45:44.172       INFO    → https://perchance.org/api/getCommunityData
+22:45:44.172    REQUEST  GET     https://perchance.org/api/getCommunityData?__cacheBust=0.07510929877501304
+22:45:44.771   RESPONSE  200      981B   593.0ms  https://perchance.org/api/getCommunityData?__cacheBust=0.07510929877501304
+                                      content-type: application/json; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5b0ab6d54d1-DEL
+                                      body: {"status":"success","data":{"lastPost":{"secondsAgo":41.056,"title":"Problem loading any generator"},"posts":[{"secondsAgo":41.056,"title":"Problem loading any generator"},{"secondsAgo":726.917,"titl…
+22:45:44.771       INFO      ← 200 application/json 981B
+22:45:44.771       INFO    → https://perchance.org/api/cv
+22:45:44.771    REQUEST  GET     https://perchance.org/api/cv?__cacheBust=0.17860839068079715
+22:45:45.200   RESPONSE  200        0B   438.0ms  https://perchance.org/api/cv?__cacheBust=0.17860839068079715
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: BYPASS
+                                      server: cloudflare
+                                      cf-ray: a324f5b45e0e54d1-DEL
+22:45:45.201       INFO      ← 200 text/html 0B
+22:45:45.201       INFO    → https://perchance.org/api/alc
+22:45:45.201    REQUEST  GET     https://perchance.org/api/alc?__cacheBust=0.3068712435497567
+22:45:47.589   RESPONSE  200        1B  2390.0ms  https://perchance.org/api/alc?__cacheBust=0.3068712435497567
+                                      content-type: text/html; charset=utf-8
+                                      content-length: 1
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5b7086554d1-DEL
+                                      body: 1
+22:45:47.589       INFO      ← 200 text/html 1B
+22:45:47.589       INFO    → https://perchance.org/api/count
+22:45:47.589    REQUEST  GET     https://perchance.org/api/count?__cacheBust=0.955652388232015
+22:45:48.250   RESPONSE  200        0B   657.0ms  https://perchance.org/api/count?__cacheBust=0.955652388232015
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5c5fc8a54d1-DEL
+22:45:48.250       INFO      ← 200 text/html 0B
+22:45:48.250       INFO    → https://perchance.org/api/securityData
+22:45:48.250    REQUEST  GET     https://perchance.org/api/securityData?__cacheBust=0.30699934384007577
+22:45:49.548   RESPONSE  200      784B  1297.0ms  https://perchance.org/api/securityData?__cacheBust=0.30699934384007577
+                                      content-type: application/json; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5ca189d54d1-DEL
+                                      body: {"spamHostnames":["galaxy-link.space","shrinkme.io","shrinkearn.com","linkvertise.com","clicksfly.com","adfoc.us","adfly.be","shrtfly.com","safelinku.com","fc.lc","adtival.network","snacklink.id","hy…
+22:45:49.548       INFO      ← 200 application/json 784B
+22:45:49.548       INFO    → https://perchance.org/api/getAccessCodeForAdPoweredStuff
+22:45:49.548    REQUEST  GET     https://perchance.org/api/getAccessCodeForAdPoweredStuff?__cacheBust=0.9150770068301888
+22:45:50.000   RESPONSE  200       64B   453.0ms  https://perchance.org/api/getAccessCodeForAdPoweredStuff?__cacheBust=0.9150770068301888
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5d23ef254d1-DEL
+                                      body: d52b71655ad35c89a763c438d5304971446f203561ad0ce8beb3af973f25c835
+22:45:50.001       INFO      ← 200 text/html 64B
+22:45:50.002       INFO  PHASE 4: embed iframe flow
+22:45:50.002       INFO    → embed page (image-generation.perchance.org/embed)
+22:45:50.003    REQUEST  GET     https://image-generation.perchance.org/embed
+22:45:51.454   RESPONSE  200    77.9KB  1453.0ms  https://image-generation.perchance.org/embed
+                                      content-type: text/html
+                                      cf-cache-status: EXPIRED
+                                      server: cloudflare
+                                      cf-ray: a324f5d5ed6b0d9e-DEL
+                                      body: <!DOCTYPE html>\n<html>\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>Perchance Image Generation Embed</title>\n  <meta name="col…
+22:45:51.454       INFO    → adAccessCode
+22:45:51.454    REQUEST  GET     https://perchance.org/api/getAccessCodeForAdPoweredStuff?__cacheBust=0.6322918681995454
+22:45:51.890   RESPONSE  200       64B   437.0ms  https://perchance.org/api/getAccessCodeForAdPoweredStuff?__cacheBust=0.6322918681995454
+                                      content-type: text/html; charset=utf-8
+                                      cf-cache-status: MISS
+                                      server: cloudflare
+                                      cf-ray: a324f5de18a154d1-DEL
+                                      body: d52b71655ad35c89a763c438d5304971446f203561ad0ce8beb3af973f25c835
+22:45:51.890       INFO      ← adAccessCode: d52b71655ad35c89…
+22:45:51.890       INFO    → verifyUser (asking for userKey)
+22:45:51.890    REQUEST  GET     https://image-generation.perchance.org/api/verifyUser?thread=0&__cacheBust=0.5647602712739717
+22:45:52.184   RESPONSE  200       58B   297.0ms  https://image-generation.perchance.org/api/verifyUser?thread=0&__cacheBust=0.5647602712739717
+                                      content-type: text/plain;charset=UTF-8
+                                      cf-cache-status: BYPASS
+                                      server: cloudflare
+                                      cf-ray: a324f5e0de920d9e-DEL
+                                      body: {"status":"failed_verification","reason":"token_required"}
+22:45:52.184    REQUEST  GET     https://image-generation.perchance.org/api/verifyUser?thread=1&__cacheBust=0.8491226809440592
+22:45:52.755   RESPONSE  200       58B   563.0ms  https://image-generation.perchance.org/api/verifyUser?thread=1&__cacheBust=0.8491226809440592
+                                      content-type: text/plain;charset=UTF-8
+                                      cf-cache-status: BYPASS
+                                      server: cloudflare
+                                      cf-ray: a324f5e2aac80d9e-DEL
+                                      body: {"status":"failed_verification","reason":"token_required"}
+22:45:52.770    REQUEST  GET     https://image-generation.perchance.org/api/verifyUser?thread=2&__cacheBust=0.5382577402672013
+22:45:53.407   RESPONSE  200       58B   641.0ms  https://image-generation.perchance.org/api/verifyUser?thread=2&__cacheBust=0.5382577402672013
+                                      content-type: text/plain;charset=UTF-8
+                                      cf-cache-status: BYPASS
+                                      server: cloudflare
+                                      cf-ray: a324f5e65c710d9e-DEL
+                                      body: {"status":"failed_verification","reason":"token_required"}
+22:45:53.407      ERROR  
+                                      could not get userKey; skipping generate
+22:45:53.407       INFO  ──────────────────────────────────────────────────────────────────────────────
+22:45:53.407   COMPLETE  done — 87 events, 19 responses, 3 errors
+22:45:53.407   COMPLETE    status: 18×200, 1×404
+22:45:53.407   COMPLETE    top hosts: perchance.org×11, image-generation.perchance.org×4, 7be8a4f14d1cac8538b50440e3235b4b.perchance.org×2, www.googletagmanager.com×1, static.cloudflareinsights.com×1
+
+HTML dashboard: index.html
+  → open in your browser to see the live network log
+```
+
+
+
+ 
+
+look this is still a issue i waned it to keep working.. no done 
+
+let the network logs printing all the time..
+
+see all of it.. keep workign kep working.. keep working. and alsoo doing ur task and make sure all the data correclty viisible on the netowk logs..
+
+also in the web..
+
+
+
+deeep thika nd then work..
+
+
+
+make sur eall things work in deepend way
