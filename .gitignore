@@ -46,3 +46,5 @@ htmlcov/
 .perchance_client/
 logs.jsonl
 *.log
+# Live HTML dashboard regenerated on every run
+index.html

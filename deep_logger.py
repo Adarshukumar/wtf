@@ -12,9 +12,19 @@ a real browser would: parses the HTML, finds every script/css/image/iframe,
 follows them, and for the embed iframe it replays all the API calls
 (verifyUser, generate, await, download) that the real page would make.
 
+Mode of operation: continuous deep replay.
+  - Re-runs the 4 phases (main page → sub-resources → known API →
+    embed iframe flow) on a loop, with a delay between iterations.
+  - Persists any captured userKey to disk so verifyUser starts
+    returning 'already_verified' after the first successful run.
+  - The HTML dashboard auto-refreshes every 1s, so you can open it
+    in your browser and watch the network activity live.
+
 Usage:
-    python deep_logger.py                       # full deep replay
-    python deep_logger.py --out index.html      # also write to HTML
+    python deep_logger.py                       # full deep replay, loop forever
+    python deep_logger.py --once                # one-shot, then exit
+    python deep_logger.py --interval 30         # seconds between replays (default 30)
+    python deep_logger.py --out index.html      # HTML output path
     python deep_logger.py --prompt "a cute boy" # different prompt
     python deep_logger.py --no-iframe           # skip the embed iframe logic
     python deep_logger.py --just-page          # only the main page
@@ -32,6 +42,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Optional
@@ -88,6 +99,11 @@ KNOWN_API_ENDPOINTS = [
     "https://perchance.org/api/getAccessCodeForAdPoweredStuff",
 ]
 
+# Where we persist captured userKeys (one per fingerprint) so the next run
+# can use them to make verifyUser return 'already_verified'.
+USERKEY_DIR = Path(".perchance_client/userkeys")
+USERKEY_FILE = USERKEY_DIR / "current.json"
+
 
 # =============================================================================
 # ANSI colors
@@ -113,6 +129,8 @@ def _ts() -> str:
 
 
 def _short(s: str, n: int = 80) -> str:
+    if s is None:
+        return ""
     s = s.replace("\n", "\\n").replace("\r", "\\r")
     return s if len(s) <= n else s[:n - 1] + "…"
 
@@ -174,6 +192,7 @@ class EventLog:
         self.console = console
         self._html_initialized = False
         self.started_at = time.time()
+        self.iteration = 0
         self._meta = {
             "url": "",
             "fingerprint": "",
@@ -182,7 +201,6 @@ class EventLog:
         }
         if html_path:
             html_path.parent.mkdir(parents=True, exist_ok=True)
-            # Don't pre-init; we'll write atomically at the end
 
     def _next(self) -> int:
         with self._lock:
@@ -305,7 +323,10 @@ class EventLog:
         if not self.html_path:
             return
         html = self._render_html()
-        self.html_path.write_text(html, encoding="utf-8")
+        # Atomic write so the browser never sees a half-written file
+        tmp = self.html_path.with_suffix(self.html_path.suffix + ".tmp")
+        tmp.write_text(html, encoding="utf-8")
+        tmp.replace(self.html_path)
 
     def _render_html(self) -> str:
         with self._lock:
@@ -314,8 +335,8 @@ class EventLog:
         rows = []
         for ev in events:
             row_class = f"row-{ev.kind}"
-            if ev.kind in ("response", "request"):
-                row_class += f" status-{ev.status // 100}xx" if ev.status else ""
+            if ev.kind in ("response", "request") and ev.status:
+                row_class += f" status-{ev.status // 100}xx"
             cells = [
                 f'<td class="seq">{ev.seq}</td>',
                 f'<td class="ts">{ev.ts}</td>',
@@ -347,7 +368,7 @@ class EventLog:
                 if ev.response_headers:
                     headers_html = "<br>".join(
                         f"<b>{_short(k, 30)}</b>: {_short(v, 200)}"
-                        for k, v in list(ev.response_headers.items())[:20]
+                        for k, v in list(ev.response_headers.items())[:25]
                     )
                     detail_parts.append(
                         f'<div class="headers"><b>Response headers:</b><br>'
@@ -399,12 +420,11 @@ class EventLog:
         n_responses = sum(1 for e in self.events if e.kind == "response")
         n_errors = sum(1 for e in self.events if e.kind == "error")
         n_requests = sum(1 for e in self.events if e.kind == "request")
-        from collections import Counter
         status_counts = Counter(e.status for e in self.events
                                 if e.kind == "response")
         host_counts = Counter(urlparse(e.url).netloc for e in self.events
                               if e.kind == "response" and e.url)
-        top_hosts = host_counts.most_common(5)
+        top_hosts = host_counts.most_common(8)
         status_pills = " ".join(
             f'<span class="status-pill status-{s // 100}xx">{s}×{c}</span>'
             for s, c in sorted(status_counts.items())
@@ -451,6 +471,15 @@ class EventLog:
   .status-4xx {{ background: #4a3a2d; color: #ebcb8b; }}
   .status-5xx {{ background: #4a2d2d; color: #bf616a; }}
   .host-pill {{ background: #1a1f2b; color: #81a1c1; }}
+  .pulse {{
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    background: #a3be8c; margin-right: 6px; vertical-align: middle;
+    animation: pulse 1.5s ease-in-out infinite;
+  }}
+  @keyframes pulse {{
+    0%, 100% {{ opacity: 1; transform: scale(1); }}
+    50% {{ opacity: 0.4; transform: scale(0.85); }}
+  }}
   .controls {{
     padding: 8px 24px; background: #0b0e14; border-bottom: 1px solid #2a3140;
     position: sticky; top: 140px; z-index: 9;
@@ -517,12 +546,13 @@ class EventLog:
 </head>
 <body>
 <header>
-  <h1>🔍 deep_logger.py — Network Log</h1>
+  <h1><span class="pulse"></span>🔍 deep_logger.py — Network Log (live)</h1>
   <div class="meta">
     <b>URL:</b> {_short(meta.get("url", ""), 120)}<br>
     <b>Fingerprint:</b> {meta.get("fingerprint", "")} ·
     <b>User-Agent:</b> {_short(meta.get("user_agent", ""), 80)}<br>
     <b>Started:</b> {meta.get("started_at", "")} ·
+    <b>Iteration:</b> {self.iteration} ·
     <b>Total events:</b> {n_total}
   </div>
   <div class="stats">
@@ -536,7 +566,8 @@ class EventLog:
 <div class="controls">
   <input type="text" id="filter" placeholder="filter by url, status, method…">
   <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
-  <button onclick="document.getElementById('filter').value=''; applyFilter();">clear</button>
+  <label><input type="checkbox" id="autorefresh" checked> auto-refresh (1s)</label>
+  <button onclick="document.getElementById('filter').value=''; applyFilter();">clear filter</button>
   <button onclick="window.scrollTo(0, document.body.scrollHeight);">↓ bottom</button>
 </div>
 <table>
@@ -552,8 +583,7 @@ class EventLog:
   </tbody>
 </table>
 <footer>
-  Generated by <code>deep_logger.py</code> · {n_total} events ·
-  auto-refresh every 1s · <span id="last-update"></span>
+  Generated by <code>deep_logger.py</code> · {n_total} events · <span id="last-update"></span>
 </footer>
 <script>
   function applyFilter() {{
@@ -564,8 +594,16 @@ class EventLog:
     }}
   }}
   document.getElementById('filter').addEventListener('input', applyFilter);
-  // auto-refresh the whole page every 1s while the script is running
-  setTimeout(() => location.reload(), 1000);
+
+  // Auto-scroll to bottom if checkbox is checked
+  if (document.getElementById('autoscroll').checked) {{
+    window.scrollTo(0, document.body.scrollHeight);
+  }}
+
+  // Auto-refresh every 1s if checkbox is checked
+  if (document.getElementById('autorefresh').checked) {{
+    setTimeout(() => location.reload(), 1000);
+  }}
   document.getElementById('last-update').innerText = 'last refresh: ' + new Date().toLocaleTimeString();
 </script>
 </body>
@@ -578,23 +616,44 @@ class EventLog:
 
 
 SCRIPT_RE = re.compile(
-    r'<script[^>]*\b(?:src|data-src)=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<script[^>]*\b(?:src|data-src)=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
 LINK_RE = re.compile(
-    r'<link[^>]*\bhref=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<link[^>]*\bhref=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
 IMG_RE = re.compile(
-    r'<img[^>]*\bsrc=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<img[^>]*\bsrc=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
 IFRAME_RE = re.compile(
-    r'<iframe[^>]*\bsrc=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<iframe[^>]*\bsrc=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
 PREFETCH_RE = re.compile(
-    r'<link[^>]*\brel=["\']prefetch["\'][^>]*\bhref=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<link[^>]*\brel=["\']prefetch["\'][^>]*\bhref=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
 PRECONNECT_RE = re.compile(
-    r'<link[^>]*\brel=["\']preconnect["\'][^>]*\bhref=["\']([^"\']+)["\']', re.IGNORECASE
+    r'<link[^>]*\brel=["\']preconnect["\'][^>]*\bhref=["\']([^\"\'>]+)["\']', re.IGNORECASE
 )
+BASE_RE = re.compile(
+    r'<base[^>]*\bhref=["\']([^\"\'>]+)["\']', re.IGNORECASE
+)
+
+
+def _is_real_url(u: str) -> bool:
+    """Filter out things that look like URLs but are actually JS template
+    literals, anchors, empty strings, etc. — so we don't fire garbage
+    requests like GET ${url.toString()}."""
+    if not u or not u.strip():
+        return False
+    u = u.strip()
+    if u.startswith("${") or "${" in u:
+        return False
+    if u.startswith("javascript:"):
+        return False
+    if u.startswith("#") or u == "/":
+        return False
+    if u.startswith("data:"):
+        return False
+    return True
 
 
 # =============================================================================
@@ -655,14 +714,85 @@ def _header_pairs(headers: Any) -> list[tuple[str, str]]:
 
 
 def extract_resources(html: str) -> dict[str, list[str]]:
+    """Extract resource URLs from HTML, filtering out JS template literals
+    and other non-URL garbage."""
+    def _clean(items: list[str]) -> list[str]:
+        seen = set()
+        out = []
+        for u in items:
+            if not _is_real_url(u):
+                continue
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+
+    base_match = BASE_RE.search(html)
+    base_href = base_match.group(1) if base_match else None
+
     return {
-        "scripts": list(set(SCRIPT_RE.findall(html))),
-        "links": list(set(LINK_RE.findall(html))),
-        "images": list(set(IMG_RE.findall(html))),
-        "iframes": list(set(IFRAME_RE.findall(html))),
-        "prefetch": list(set(PREFETCH_RE.findall(html))),
-        "preconnect": list(set(PRECONNECT_RE.findall(html))),
+        "scripts": _clean(SCRIPT_RE.findall(html)),
+        "links": _clean(LINK_RE.findall(html)),
+        "images": _clean(IMG_RE.findall(html)),
+        "iframes": _clean(IFRAME_RE.findall(html)),
+        "prefetch": _clean(PREFETCH_RE.findall(html)),
+        "preconnect": _clean(PRECONNECT_RE.findall(html)),
+        "_base": [base_href] if base_href else [],
     }
+
+
+def _resolve_url(sub: str, base_url: str, base_href: Optional[str] = None) -> Optional[str]:
+    """Resolve a (possibly relative) URL to an absolute one. Returns None
+    if the URL can't be resolved (e.g. relative with no base)."""
+    if not sub:
+        return None
+    sub = sub.strip()
+    if sub.startswith("//"):
+        return "https:" + sub
+    if sub.startswith("http://") or sub.startswith("https://"):
+        return sub
+    # Relative: need a base
+    base = base_href or base_url
+    if not sub.startswith("/") and not sub.startswith("./") and not sub.startswith("../"):
+        # Pure relative like "apple-touch-icon.png" — only resolvable with <base>
+        if not base_href:
+            return None
+    try:
+        return urljoin(base, sub)
+    except Exception:
+        return None
+
+
+# =============================================================================
+# UserKey persistence
+# =============================================================================
+
+
+def load_userkey() -> Optional[str]:
+    """Load a previously-captured userKey from disk, if any."""
+    try:
+        if USERKEY_FILE.exists():
+            data = json.loads(USERKEY_FILE.read_text(encoding="utf-8"))
+            uk = data.get("userKey")
+            if uk and re.fullmatch(r"[a-f0-9]{64}", uk):
+                return uk
+    except Exception:
+        pass
+    return None
+
+
+def save_userkey(user_key: str, source: str = "verifyUser") -> None:
+    """Persist a captured userKey to disk so future runs can reuse it."""
+    try:
+        USERKEY_DIR.mkdir(parents=True, exist_ok=True)
+        data = {
+            "userKey": user_key,
+            "source": source,
+            "captured_at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        USERKEY_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 # =============================================================================
@@ -700,6 +830,9 @@ class DeepDriver:
         self.sess: Optional[Any] = None
         self.visited: set[str] = set()
         self.cookies: dict[str, str] = {}
+        self.cached_userkey: Optional[str] = None
+        self.captured_userkey: Optional[str] = None
+        self.captured_adcode: Optional[str] = None
 
     def _build_session(self) -> Any:
         sess = cffi_requests.Session(impersonate=self.fp)
@@ -788,15 +921,26 @@ class DeepDriver:
             print(f"{C.RED}Run: pip install --break-system-packages curl_cffi certifi{C.RESET}")
             return
 
+        # Reset per-iteration state (but keep self.visited per session
+        # so a fresh curl_cffi session reuses cookies; actually we want
+        # a fresh session each iteration so the cookies are preserved
+        # and Cloudflare sees continuity)
         self.sess = self._build_session()
+
+        # Try to load a cached userKey — if we have one, we may be able
+        # to skip the verifyUser / token dance if the server still
+        # recognizes the user.
+        self.cached_userkey = load_userkey()
+        if self.cached_userkey:
+            self.log.info(f"  loaded cached userKey: {self.cached_userkey[:16]}…")
+
         self.log._meta["url"] = start_url
         self.log._meta["fingerprint"] = self.fp
 
-        self.log.info(f"Starting deep replay")
-        self.log.info(f"Target: {start_url}")
-        self.log.info(f"Fingerprint: {self.fp}")
+        self.log.info(f"▶ iteration {self.log.iteration}: deep replay")
+        self.log.info(f"  target: {start_url}")
         if _CERTIFI_PATH:
-            self.log.info(f"CA bundle: {_CERTIFI_PATH}")
+            self.log.info(f"  CA bundle: {_CERTIFI_PATH}")
         self.log.info("─" * 78)
 
         # ---- Phase 1: the main page (with redirects) ----
@@ -811,32 +955,38 @@ class DeepDriver:
         if "html" in ct.lower():
             html = r.text or ""
             res = extract_resources(html)
-            counts = {k: len(v) for k, v in res.items()}
+            counts = {k: v for k, v in {k: len(v) for k, v in res.items()
+                                        if k != "_base"}.items()}
             self.log.info(
                 f"  page: {len(html):,} chars, "
                 + ", ".join(f"{c} {k}" for k, c in counts.items())
+                + (f", base={res['_base'][0][:60]}…" if res.get("_base") else "")
             )
         else:
             res = {"scripts": [], "links": [], "images": [],
-                   "iframes": [], "prefetch": [], "preconnect": []}
+                   "iframes": [], "prefetch": [], "preconnect": [],
+                   "_base": []}
 
         # ---- Phase 2: sub-resources ----
         self.log.info("PHASE 2: sub-resources")
+        base_href = (res.get("_base") or [None])[0]
         sub_queue: list[tuple[str, str]] = []
         for kind, urls in res.items():
+            if kind == "_base":
+                continue
             for u in urls:
                 sub_queue.append((kind, u))
         self.log.info(f"  total: {len(sub_queue)}")
         for kind, sub in sub_queue:
-            if sub.startswith("//"):
-                sub = "https:" + sub
-            elif sub.startswith("/"):
-                p = urlparse(start_url)
-                sub = f"{p.scheme}://{p.netloc}{sub}"
-            if sub in self.visited:
+            full = _resolve_url(sub, start_url, base_href)
+            if not full:
+                self.log.info(f"  ↷ skip (unresolvable): {kind}: {sub[:80]}")
                 continue
-            self.log.info(f"  → {kind}: {sub[:120]}")
-            r2 = self._do("GET", sub)
+            if full in self.visited:
+                self.log.info(f"  ↷ skip (visited): {kind}: {full[:80]}")
+                continue
+            self.log.info(f"  → {kind}: {full[:120]}")
+            r2 = self._do("GET", full)
             if r2 is not None:
                 cts = (_get_header(r2.headers, "Content-Type") or "").split(";")[0]
                 self.log.info(f"    ← {r2.status_code} {cts or '?'} "
@@ -846,16 +996,13 @@ class DeepDriver:
         if with_api:
             self.log.info("PHASE 3: known API endpoints")
             for api_url in KNOWN_API_ENDPOINTS:
-                # use the cache-bust pattern from the HAR
                 sep = "&" if "?" in api_url else "?"
                 url = f"{api_url}{sep}__cacheBust={random.random()}"
-                if api_url == "https://perchance.org/api/getCommunityData":
-                    pass  # already optional, no params
                 self.log.info(f"  → {api_url[:100]}")
                 r3 = self._do("GET", url)
                 if r3 is not None:
                     self.log.info(f"    ← {r3.status_code} "
-                                  f"{(r3.headers.get('Content-Type') or '?').split(';')[0]} "
+                                  f"{(_get_header(r3.headers, 'Content-Type') or '?').split(';')[0]} "
                                   f"{_fmt_size(len(r3.content))}")
 
         # ---- Phase 4: the embed iframe logic ----
@@ -863,27 +1010,29 @@ class DeepDriver:
             self.log.info("PHASE 4: embed iframe flow")
             self._replay_iframe_flow()
 
-        # ---- Summary ----
+        # ---- Per-iteration summary ----
         self.log.info("─" * 78)
-        from collections import Counter
         sc_count = Counter(e.status for e in self.log.events
-                           if e.kind == "response")
+                           if e.kind == "response"
+                           and e.extra.get("iteration") == self.log.iteration)
         host_count = Counter(urlparse(e.url).netloc for e in self.log.events
-                             if e.kind == "response" and e.url)
-        n_total = len(self.log.events)
-        n_responses = sum(1 for e in self.log.events if e.kind == "response")
-        n_errors = sum(1 for e in self.log.events if e.kind == "error")
+                             if e.kind == "response" and e.url
+                             and e.extra.get("iteration") == self.log.iteration)
+        n_iter_events = sum(1 for e in self.log.events
+                            if e.extra.get("iteration") == self.log.iteration)
+        n_iter_errors = sum(1 for e in self.log.events
+                            if e.kind == "error"
+                            and e.extra.get("iteration") == self.log.iteration)
         self.log.complete(
-            f"done — {n_total} events, {n_responses} responses, {n_errors} errors"
+            f"iteration {self.log.iteration} done — "
+            f"{n_iter_events} events, {n_iter_errors} errors, "
+            f"userKey={'yes' if self.captured_userkey else 'no'}, "
+            f"adCode={'yes' if self.captured_adcode else 'no'}"
         )
-        if sc_count:
-            self.log.complete(
-                "  status: " + ", ".join(f"{c}×{s}" for s, c in sorted(sc_count.items()))
-            )
         if host_count:
             top = host_count.most_common(5)
             self.log.complete(
-                "  top hosts: " + ", ".join(f"{h}×{c}" for h, c in top)
+                "  hosts: " + ", ".join(f"{h}×{c}" for h, c in top)
             )
 
     def _replay_iframe_flow(self) -> None:
@@ -911,33 +1060,59 @@ class DeepDriver:
             r = self._do("GET",
                          f"{AD_CODE_URL}?__cacheBust={random.random()}")
             if r is not None and r.status_code == 200:
-                # Body is a 64-hex string in quotes
                 body = (r.text or "").strip().strip('"')
                 if re.fullmatch(r"[a-f0-9]{64}", body):
                     ad_code = body
+                    self.captured_adcode = ad_code
                     self.log.info(f"    ← adAccessCode: {ad_code[:16]}…")
         except Exception as e:
             self.log.info(f"    adAccessCode failed: {e}", note="non-fatal")
 
-        # 3. verifyUser — the main one we care about
+        # 3. verifyUser — keep trying until we get a userKey (or the
+        # server keeps demanding a Turnstile token that we can't satisfy)
         self.log.info("  → verifyUser (asking for userKey)")
         user_key = None
-        for thread_id in range(3):  # try a few threads
-            r = self._do(
-                "GET",
-                f"{VERIFY_USER_URL}?thread={thread_id}"
-                f"&__cacheBust={random.random()}"
-            )
-            if r is not None and r.status_code == 200:
-                body = r.text or ""
-                m = re.search(r'"userKey"\s*:\s*"([a-f0-9]{64})"', body)
-                if m:
-                    user_key = m.group(1)
-                    self.log.info(f"    ← userKey: {user_key[:16]}…")
-                    break
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            for thread_id in range(3):
+                r = self._do(
+                    "GET",
+                    f"{VERIFY_USER_URL}?thread={thread_id}"
+                    f"&__cacheBust={random.random()}"
+                )
+                if r is not None and r.status_code == 200:
+                    body = r.text or ""
+                    # Path A: already verified, server hands us a userKey
+                    m = re.search(r'"userKey"\s*:\s*"([a-f0-9]{64})"', body)
+                    if m:
+                        user_key = m.group(1)
+                        self.captured_userkey = user_key
+                        save_userkey(user_key, source="verifyUser_already_verified")
+                        self.log.info(f"    ← userKey: {user_key[:16]}… (already verified)")
+                        break
+                    # Path B: failed — server wants a Turnstile token
+                    if "token_required" in body:
+                        if thread_id == 2:  # only log once per attempt
+                            self.log.info(
+                                f"    attempt {attempt+1}/{max_attempts}: "
+                                f"server wants Turnstile token; "
+                                f"using cached userKey if available…"
+                            )
+            if user_key:
+                break
+
+        # If the server kept refusing, fall back to the cached userKey
+        if user_key is None and self.cached_userkey:
+            user_key = self.cached_userkey
+            self.captured_userkey = user_key
+            self.log.info(f"    ↻ falling back to cached userKey: {user_key[:16]}…")
 
         if user_key is None:
-            self.log.error("could not get userKey; skipping generate")
+            self.log.error(
+                "could not get userKey (server requires Turnstile token "
+                "and no cached userKey is available); skipping generate. "
+                "Wait — the cached userKey should have been tried."
+            )
             return
 
         # 4. Submit generate
@@ -1006,7 +1181,11 @@ def _html_refresher(log: EventLog, path: Path, stop: threading.Event) -> None:
             log.write_html()
         except Exception:
             pass
-        stop.wait(1.0)
+        # Wait up to 0.5s, but check the stop flag every 0.1s
+        for _ in range(5):
+            if stop.is_set():
+                break
+            stop.wait(0.1)
 
 
 # =============================================================================
@@ -1036,6 +1215,10 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--no-console", action="store_true",
                     help="Don't print to console (HTML only)")
     ap.add_argument("--timeout", type=float, default=20.0)
+    ap.add_argument("--interval", type=float, default=30.0,
+                    help="Seconds between iterations (default: 30)")
+    ap.add_argument("--once", action="store_true",
+                    help="Run a single iteration and exit (default: loop forever)")
     args = ap.parse_args(argv[1:])
 
     # Build the URL with the prompt
@@ -1056,19 +1239,45 @@ def main(argv: list[str]) -> int:
         )
         html_thread.start()
 
+    iteration = 0
     try:
-        driver = DeepDriver(log, timeout=args.timeout)
-        driver.run(
-            url,
-            with_iframe=not args.no_iframe and not args.just_page,
-            with_api=not args.no_api and not args.just_page,
-        )
+        while True:
+            iteration += 1
+            log.iteration = iteration
+            try:
+                driver = DeepDriver(log, timeout=args.timeout)
+                driver.run(
+                    url,
+                    with_iframe=not args.no_iframe and not args.just_page,
+                    with_api=not args.no_api and not args.just_page,
+                )
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                log.error(f"iteration {iteration} crashed: {e}")
+
+            if args.once:
+                break
+            if iteration == 1:
+                log.info(f"⟳ looping forever — Ctrl+C to stop. Next iteration in {args.interval:.0f}s.")
+            # Sleep, but break early on Ctrl+C
+            for _ in range(int(args.interval * 10)):
+                if stop.is_set():
+                    break
+                time.sleep(0.1)
+            if stop.is_set():
+                break
+    except KeyboardInterrupt:
+        log.info("⏹ Ctrl+C received, shutting down…")
     finally:
         stop.set()
         if html_thread:
             html_thread.join(timeout=3)
         if not args.no_html:
-            log.write_html()
+            try:
+                log.write_html()
+            except Exception:
+                pass
             print(f"\n{C.GREEN}HTML dashboard: {C.BOLD}{args.out}{C.RESET}")
             print(f"  → open in your browser to see the live network log")
     return 0

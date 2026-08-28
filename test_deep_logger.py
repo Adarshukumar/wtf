@@ -244,6 +244,145 @@ class TestResourceExtraction(unittest.TestCase):
                   "prefetch", "preconnect"):
             self.assertEqual(res[k], [])
 
+    def test_filters_js_template_literals(self):
+        """JS template strings like ${url.toString()} should not be
+        treated as URLs — they caused InvalidURL errors on the user's run."""
+        html = '''
+        <html><body>
+            <iframe src="${url.toString()}"></iframe>
+            <script src="${CDN_URL}/app.js"></script>
+            <img src="${imgSrc}">
+        </body></html>
+        '''
+        res = deep_logger.extract_resources(html)
+        # All 3 should be filtered
+        self.assertEqual(res["iframes"], [])
+        self.assertEqual(res["scripts"], [])
+        self.assertEqual(res["images"], [])
+
+    def test_extracts_base_href(self):
+        html = '<html><head><base href="https://image-generation.perchance.org/"></head></html>'
+        res = deep_logger.extract_resources(html)
+        self.assertEqual(res.get("_base"), ["https://image-generation.perchance.org/"])
+
+    def test_filters_empty_and_anchor_urls(self):
+        html = '''
+        <html><head>
+            <link href="">empty</link>
+            <link href="#top">anchor</link>
+            <link href="javascript:void(0)">js</link>
+            <link href="data:text/plain;base64,SGk=">data</link>
+            <link href="/real/path">real</link>
+        </head></html>
+        '''
+        res = deep_logger.extract_resources(html)
+        # /real/path survives, the others don't
+        self.assertIn("/real/path", res["links"])
+        for filtered in ("", "#top", "javascript:void(0)",
+                         "data:text/plain;base64,SGk="):
+            self.assertNotIn(filtered, res["links"])
+
+
+class TestUrlResolution(unittest.TestCase):
+    def test_absolute_url(self):
+        self.assertEqual(
+            deep_logger._resolve_url("https://x.com/", "https://base.com"),
+            "https://x.com/"
+        )
+
+    def test_protocol_relative(self):
+        self.assertEqual(
+            deep_logger._resolve_url("//cdn.x.com/a.js", "https://base.com"),
+            "https://cdn.x.com/a.js"
+        )
+
+    def test_root_relative(self):
+        self.assertEqual(
+            deep_logger._resolve_url("/static/app.js", "https://base.com/page"),
+            "https://base.com/static/app.js"
+        )
+
+    def test_pure_relative_without_base_returns_none(self):
+        """apple-touch-icon.png with no <base> should not be requested."""
+        self.assertIsNone(
+            deep_logger._resolve_url("apple-touch-icon.png",
+                                     "https://perchance.org/imageapi")
+        )
+
+    def test_pure_relative_with_base_resolves(self):
+        """Same URL but with a <base> set should resolve correctly."""
+        self.assertEqual(
+            deep_logger._resolve_url("apple-touch-icon.png",
+                                     "https://perchance.org/imageapi",
+                                     base_href="https://perchance.org/"),
+            "https://perchance.org/apple-touch-icon.png"
+        )
+
+    def test_empty_url(self):
+        self.assertIsNone(deep_logger._resolve_url("", "https://x.com"))
+
+
+class TestUserKeyPersistence(unittest.TestCase):
+    def test_save_and_load_roundtrip(self, tmp_path=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            # Override the path so we don't pollute the real dir
+            orig_file = deep_logger.USERKEY_FILE
+            orig_dir = deep_logger.USERKEY_DIR
+            deep_logger.USERKEY_DIR = Path(tmp) / "userkeys"
+            deep_logger.USERKEY_FILE = deep_logger.USERKEY_DIR / "current.json"
+            try:
+                test_key = "a" * 64
+                # Initially no key
+                self.assertIsNone(deep_logger.load_userkey())
+                # Save and load
+                deep_logger.save_userkey(test_key, source="test")
+                loaded = deep_logger.load_userkey()
+                self.assertEqual(loaded, test_key)
+            finally:
+                deep_logger.USERKEY_FILE = orig_file
+                deep_logger.USERKEY_DIR = orig_dir
+
+    def test_save_rejects_invalid_key(self, tmp_path=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            orig_file = deep_logger.USERKEY_FILE
+            orig_dir = deep_logger.USERKEY_DIR
+            deep_logger.USERKEY_DIR = Path(tmp) / "userkeys"
+            deep_logger.USERKEY_FILE = deep_logger.USERKEY_DIR / "current.json"
+            try:
+                deep_logger.save_userkey("not-hex-or-64-chars")
+                # Should NOT have created a file (or if it did, load returns None)
+                self.assertIsNone(deep_logger.load_userkey())
+            finally:
+                deep_logger.USERKEY_FILE = orig_file
+                deep_logger.USERKEY_DIR = orig_dir
+
+    def test_load_handles_missing_file(self):
+        orig_file = deep_logger.USERKEY_FILE
+        orig_dir = deep_logger.USERKEY_DIR
+        deep_logger.USERKEY_DIR = Path("/nonexistent/path")
+        deep_logger.USERKEY_FILE = deep_logger.USERKEY_DIR / "x.json"
+        try:
+            self.assertIsNone(deep_logger.load_userkey())
+        finally:
+            deep_logger.USERKEY_FILE = orig_file
+            deep_logger.USERKEY_DIR = orig_dir
+
+
+class TestUrlSanity(unittest.TestCase):
+    def test_filters_template_literal(self):
+        self.assertFalse(deep_logger._is_real_url("${url.toString()}"))
+        self.assertFalse(deep_logger._is_real_url("https://x.com/${path}"))
+
+    def test_keeps_normal_urls(self):
+        self.assertTrue(deep_logger._is_real_url("https://x.com/path"))
+        self.assertTrue(deep_logger._is_real_url("//cdn.x.com/x.js"))
+        self.assertTrue(deep_logger._is_real_url("/static/app.js"))
+
+    def test_filters_garbage(self):
+        for bad in ("", "   ", "#", "/", "javascript:alert(1)",
+                    "data:text/plain,hi"):
+            self.assertFalse(deep_logger._is_real_url(bad))
+
 
 class TestFormatting(unittest.TestCase):
     def test_short(self):
