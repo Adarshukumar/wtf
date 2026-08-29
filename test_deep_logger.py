@@ -368,6 +368,92 @@ class TestUserKeyPersistence(unittest.TestCase):
             deep_logger.USERKEY_DIR = orig_dir
 
 
+class TestTurnstileSupport(unittest.TestCase):
+    """Make sure the Turnstile token + cf_clearance injection plumbing
+    works end-to-end without breaking the existing flow."""
+
+    def test_init_stores_token(self):
+        log = deep_logger.EventLog(console=False)
+        d = deep_logger.DeepDriver(log, turnstile_token="0.test", cf_clearance="abc")
+        self.assertEqual(d.turnstile_token, "0.test")
+        self.assertEqual(d.cf_clearance, "abc")
+
+    def test_init_defaults_to_none(self):
+        log = deep_logger.EventLog(console=False)
+        d = deep_logger.DeepDriver(log)
+        self.assertIsNone(d.turnstile_token)
+        self.assertIsNone(d.cf_clearance)
+
+    def test_build_session_injects_cf_clearance(self):
+        """cf_clearance should be set as a cookie for both perchance.org
+        and image-generation.perchance.org domains."""
+        log = deep_logger.EventLog(console=False)
+        with patch.object(deep_logger, "cffi_requests") as mod, \
+             patch.object(deep_logger, "_CURL_CFFI_AVAILABLE", True):
+            mod.RequestException = Exception
+            class _MM(dict):
+                def keys(self): return ["chrome131"]
+            mod.BrowserType = MagicMock()
+            mod.BrowserType.__members__ = _MM()
+            sess = MagicMock()
+            sess.headers = {}
+            sess.cookies = MagicMock()
+            mod.Session.return_value = sess
+
+            d = deep_logger.DeepDriver(log, cf_clearance="0xCAFEBABE")
+            s = d._build_session()
+            # Either set_cookie() (Cookie) or set() should be called
+            total = (sess.cookies.set_cookie.call_count
+                     + sess.cookies.set.call_count)
+            self.assertGreaterEqual(total, 1,
+                f"no cookie set: {sess.cookies.method_calls}")
+
+    def test_verifyUser_sends_turnstile_header(self):
+        """When turnstile_token is set, verifyUser should send it in the
+        cf-turnstile-response header AND the turnstileToken query param."""
+        sent_urls = []
+        sent_headers = []
+
+        class _FakeResp:
+            status_code = 200
+            text = '{"status":"failed_verification","reason":"token_required"}'
+            content = b'{"status":"failed_verification","reason":"token_required"}'
+            headers = {"content-type": "text/plain"}
+            cookies = []
+
+        class _FakeSess:
+            headers = {}
+            verify = True
+            def request(self, method, url, **kw):
+                sent_urls.append(url)
+                sent_headers.append(kw.get("headers", {}))
+                return _FakeResp()
+
+        with patch.object(deep_logger, "cffi_requests") as mod, \
+             patch.object(deep_logger, "_CURL_CFFI_AVAILABLE", True):
+            mod.RequestException = Exception
+            class _MM(dict):
+                def keys(self): return ["chrome131"]
+            mod.BrowserType = MagicMock()
+            mod.BrowserType.__members__ = _MM()
+            mod.Session.return_value = _FakeSess()
+
+            log = deep_logger.EventLog(console=False)
+            d = deep_logger.DeepDriver(
+                log, turnstile_token="0.TEST_TOKEN_HERE_xxxxxxxxxxxxx"
+            )
+            d.sess = d._build_session()
+            d._replay_iframe_flow()
+            verify_urls = [u for u in sent_urls if "verifyUser" in u]
+            self.assertTrue(any("turnstileToken=" in u for u in verify_urls),
+                            f"no turnstileToken param in: {verify_urls[:3]}")
+            self.assertTrue(
+                any("cf-turnstile-response" in (h or {})
+                    for h in sent_headers),
+                f"no cf-turnstile-response header in: {sent_headers[:3]}"
+            )
+
+
 class TestUrlSanity(unittest.TestCase):
     def test_filters_template_literal(self):
         self.assertFalse(deep_logger._is_real_url("${url.toString()}"))

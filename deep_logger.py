@@ -28,6 +28,14 @@ Usage:
     python deep_logger.py --prompt "a cute boy" # different prompt
     python deep_logger.py --no-iframe           # skip the embed iframe logic
     python deep_logger.py --just-page          # only the main page
+
+Cloudflare Turnstile / cf_clearance (advanced — for getting past the
+verifyUser "token_required" wall):
+    python deep_logger.py --turnstile-token "0.xxx..."     # Turnstile token
+    python deep_logger.py --cf-clearance "0a1b2c..."        # Cloudflare trust cookie
+    python deep_logger.py --refresh-token token.txt        # file with a fresh
+                                                           # token, reread each
+                                                           # iteration (TTL ~5min)
 """
 
 from __future__ import annotations
@@ -823,7 +831,9 @@ class DeepDriver:
       - The embed iframe: verifyUser + generate + await + download
     """
 
-    def __init__(self, log: EventLog, *, timeout: float = 20.0) -> None:
+    def __init__(self, log: EventLog, *, timeout: float = 20.0,
+                 turnstile_token: Optional[str] = None,
+                 cf_clearance: Optional[str] = None) -> None:
         self.log = log
         self.timeout = timeout
         self.fp = detect_best_fingerprint()
@@ -833,6 +843,12 @@ class DeepDriver:
         self.cached_userkey: Optional[str] = None
         self.captured_userkey: Optional[str] = None
         self.captured_adcode: Optional[str] = None
+        # Cloudflare Turnstile: when verifyUser returns token_required, the
+        # caller can supply a freshly-captured token here. Tokens last ~5min.
+        self.turnstile_token = turnstile_token
+        # Cloudflare cf_clearance cookie set when the user passes a challenge.
+        # Needed for Cloudflare-gated endpoints to treat us as already-cleared.
+        self.cf_clearance = cf_clearance
 
     def _build_session(self) -> Any:
         sess = cffi_requests.Session(impersonate=self.fp)
@@ -850,6 +866,29 @@ class DeepDriver:
                 sess.verify = _CERTIFI_PATH
             except Exception:
                 pass
+
+        # Inject cf_clearance cookie for both domains if provided.
+        # curl_cffi's Session.cookies is a RequestsCookieJar — set() works.
+        if self.cf_clearance:
+            from http.cookiejar import Cookie
+            for domain in ("perchance.org", "image-generation.perchance.org"):
+                try:
+                    sess.cookies.set_cookie(Cookie(
+                        version=0, name="cf_clearance", value=self.cf_clearance,
+                        port=None, port_specified=False,
+                        domain=domain, domain_specified=True,
+                        domain_initial_dot=domain.startswith("."),
+                        path="/", path_specified=True,
+                        secure=True, expires=None, discard=False,
+                        comment=None, comment_url=None, rest={},
+                    ))
+                except Exception:
+                    # Fallback: simpler API
+                    try:
+                        sess.cookies.set("cf_clearance", self.cf_clearance,
+                                         domain=domain, path="/")
+                    except Exception:
+                        pass
         return sess
 
     def _do(self, method: str, url: str, **kw) -> Optional[Any]:
@@ -933,6 +972,10 @@ class DeepDriver:
         self.cached_userkey = load_userkey()
         if self.cached_userkey:
             self.log.info(f"  loaded cached userKey: {self.cached_userkey[:16]}…")
+        if self.turnstile_token:
+            self.log.info(f"  using Turnstile token: {self.turnstile_token[:24]}…")
+        if self.cf_clearance:
+            self.log.info(f"  using cf_clearance: {self.cf_clearance[:16]}…")
 
         self.log._meta["url"] = start_url
         self.log._meta["fingerprint"] = self.fp
@@ -1075,10 +1118,20 @@ class DeepDriver:
         max_attempts = 5
         for attempt in range(max_attempts):
             for thread_id in range(3):
+                # Build the URL — if we have a Turnstile token, include it
+                # in both the query string AND as a header, since the
+                # server might check either (or both).
+                ts_param = (f"&turnstileToken={self.turnstile_token}"
+                            if self.turnstile_token else "")
+                ts_headers = (
+                    {"cf-turnstile-response": self.turnstile_token}
+                    if self.turnstile_token else {}
+                )
                 r = self._do(
                     "GET",
                     f"{VERIFY_USER_URL}?thread={thread_id}"
-                    f"&__cacheBust={random.random()}"
+                    f"&__cacheBust={random.random()}{ts_param}",
+                    headers=ts_headers,
                 )
                 if r is not None and r.status_code == 200:
                     body = r.text or ""
@@ -1093,11 +1146,20 @@ class DeepDriver:
                     # Path B: failed — server wants a Turnstile token
                     if "token_required" in body:
                         if thread_id == 2:  # only log once per attempt
-                            self.log.info(
-                                f"    attempt {attempt+1}/{max_attempts}: "
-                                f"server wants Turnstile token; "
-                                f"using cached userKey if available…"
-                            )
+                            if self.turnstile_token:
+                                self.log.error(
+                                    f"    attempt {attempt+1}/{max_attempts}: "
+                                    f"server still says token_required even "
+                                    f"with our token. Token may have expired "
+                                    f"(TTL ~5min) or be bound to a different "
+                                    f"session."
+                                )
+                            else:
+                                self.log.info(
+                                    f"    attempt {attempt+1}/{max_attempts}: "
+                                    f"server wants Turnstile token. "
+                                    f"Pass one via --turnstile-token <token>."
+                                )
             if user_key:
                 break
 
@@ -1219,6 +1281,15 @@ def main(argv: list[str]) -> int:
                     help="Seconds between iterations (default: 30)")
     ap.add_argument("--once", action="store_true",
                     help="Run a single iteration and exit (default: loop forever)")
+    ap.add_argument("--turnstile-token", default=None,
+                    help="Cloudflare Turnstile token to use for verifyUser "
+                         "(tokens expire in ~5 minutes — pass a fresh one)")
+    ap.add_argument("--cf-clearance", default=None,
+                    help="Cloudflare cf_clearance cookie value (from a real "
+                         "browser that has cleared the challenge)")
+    ap.add_argument("--refresh-token", default=None,
+                    help="Path to a file containing a fresh Turnstile token. "
+                         "Re-read every iteration so the token never expires.")
     args = ap.parse_args(argv[1:])
 
     # Build the URL with the prompt
@@ -1244,8 +1315,25 @@ def main(argv: list[str]) -> int:
         while True:
             iteration += 1
             log.iteration = iteration
+            # Re-read the Turnstile token from --refresh-token file every
+            # iteration so we always have a fresh one
+            ts_token = args.turnstile_token
+            if args.refresh_token:
+                try:
+                    ts_path = Path(args.refresh_token)
+                    if ts_path.exists():
+                        ts_token = ts_path.read_text(encoding="utf-8").strip()
+                        if ts_token and log.console:
+                            print(f"{C.GREY}[refreshed Turnstile token: {ts_token[:24]}…]{C.RESET}")
+                except Exception as e:
+                    log.error(f"could not refresh turnstile token: {e}")
             try:
-                driver = DeepDriver(log, timeout=args.timeout)
+                driver = DeepDriver(
+                    log,
+                    timeout=args.timeout,
+                    turnstile_token=ts_token,
+                    cf_clearance=args.cf_clearance,
+                )
                 driver.run(
                     url,
                     with_iframe=not args.no_iframe and not args.just_page,
