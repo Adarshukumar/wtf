@@ -80,11 +80,11 @@ DEFAULT_URL = "https://perchance.org/imageapi?prompt=a%20cute%20booy"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/131.0.0.0 Safari/537.36"
+    "Chrome/150.0.0.0 Safari/537.36"
 )
 PREFERRED_FPS = [
-    "chrome131", "chrome136", "chrome142", "chrome146",
-    "chrome124", "chrome119", "chrome116",
+    "chrome150", "chrome146", "chrome145", "chrome142", "chrome136",
+    "chrome133a", "chrome131", "chrome124", "chrome119", "chrome116",
 ]
 
 # Endpoints we know about, from the HAR
@@ -860,7 +860,7 @@ class DeepDriver:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, br, zstd",
-            "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+            "sec-ch-ua": '"Chromium";v="150", "Not_A Brand";v="24", "Google Chrome";v="150"',
             "sec-ch-ua-platform": '"Windows"',
             "sec-ch-ua-mobile": "?0",
         })
