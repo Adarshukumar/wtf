@@ -833,7 +833,8 @@ class DeepDriver:
 
     def __init__(self, log: EventLog, *, timeout: float = 20.0,
                  turnstile_token: Optional[str] = None,
-                 cf_clearance: Optional[str] = None) -> None:
+                 cf_clearance: Optional[str] = None,
+                 manual_userkey: Optional[str] = None) -> None:
         self.log = log
         self.timeout = timeout
         self.fp = detect_best_fingerprint()
@@ -849,6 +850,8 @@ class DeepDriver:
         # Cloudflare cf_clearance cookie set when the user passes a challenge.
         # Needed for Cloudflare-gated endpoints to treat us as already-cleared.
         self.cf_clearance = cf_clearance
+        # If the user already has a userKey, supply it directly.
+        self.manual_userkey = manual_userkey
 
     def _build_session(self) -> Any:
         sess = cffi_requests.Session(impersonate=self.fp)
@@ -1115,53 +1118,60 @@ class DeepDriver:
         # server keeps demanding a Turnstile token that we can't satisfy)
         self.log.info("  → verifyUser (asking for userKey)")
         user_key = None
-        max_attempts = 5
-        for attempt in range(max_attempts):
-            for thread_id in range(3):
-                # Build the URL — if we have a Turnstile token, include it
-                # in both the query string AND as a header, since the
-                # server might check either (or both).
-                ts_param = (f"&turnstileToken={self.turnstile_token}"
-                            if self.turnstile_token else "")
-                ts_headers = (
-                    {"cf-turnstile-response": self.turnstile_token}
-                    if self.turnstile_token else {}
-                )
-                r = self._do(
-                    "GET",
-                    f"{VERIFY_USER_URL}?thread={thread_id}"
-                    f"&__cacheBust={random.random()}{ts_param}",
-                    headers=ts_headers,
-                )
-                if r is not None and r.status_code == 200:
-                    body = r.text or ""
-                    # Path A: already verified, server hands us a userKey
-                    m = re.search(r'"userKey"\s*:\s*"([a-f0-9]{64})"', body)
-                    if m:
-                        user_key = m.group(1)
-                        self.captured_userkey = user_key
-                        save_userkey(user_key, source="verifyUser_already_verified")
-                        self.log.info(f"    ← userKey: {user_key[:16]}… (already verified)")
-                        break
-                    # Path B: failed — server wants a Turnstile token
-                    if "token_required" in body:
-                        if thread_id == 2:  # only log once per attempt
-                            if self.turnstile_token:
-                                self.log.error(
-                                    f"    attempt {attempt+1}/{max_attempts}: "
-                                    f"server still says token_required even "
-                                    f"with our token. Token may have expired "
-                                    f"(TTL ~5min) or be bound to a different "
-                                    f"session."
-                                )
-                            else:
-                                self.log.info(
-                                    f"    attempt {attempt+1}/{max_attempts}: "
-                                    f"server wants Turnstile token. "
-                                    f"Pass one via --turnstile-token <token>."
-                                )
-            if user_key:
-                break
+        # Path 0: a userKey was supplied directly via --manual-userkey
+        if self.manual_userkey and re.fullmatch(r"[a-f0-9]{64}", self.manual_userkey):
+            user_key = self.manual_userkey
+            self.captured_userkey = user_key
+            save_userkey(user_key, source="manual")
+            self.log.info(f"    ← userKey (manual): {user_key[:16]}…")
+        if user_key is None:
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                for thread_id in range(3):
+                    # Build the URL — if we have a Turnstile token, include it
+                    # in both the query string AND as a header, since the
+                    # server might check either (or both).
+                    ts_param = (f"&turnstileToken={self.turnstile_token}"
+                                if self.turnstile_token else "")
+                    ts_headers = (
+                        {"cf-turnstile-response": self.turnstile_token}
+                        if self.turnstile_token else {}
+                    )
+                    r = self._do(
+                        "GET",
+                        f"{VERIFY_USER_URL}?thread={thread_id}"
+                        f"&__cacheBust={random.random()}{ts_param}",
+                        headers=ts_headers,
+                    )
+                    if r is not None and r.status_code == 200:
+                        body = r.text or ""
+                        # Path A: already verified, server hands us a userKey
+                        m = re.search(r'"userKey"\s*:\s*"([a-f0-9]{64})"', body)
+                        if m:
+                            user_key = m.group(1)
+                            self.captured_userkey = user_key
+                            save_userkey(user_key, source="verifyUser_already_verified")
+                            self.log.info(f"    ← userKey: {user_key[:16]}… (already verified)")
+                            break
+                        # Path B: failed — server wants a Turnstile token
+                        if "token_required" in body:
+                            if thread_id == 2:  # only log once per attempt
+                                if self.turnstile_token:
+                                    self.log.error(
+                                        f"    attempt {attempt+1}/{max_attempts}: "
+                                        f"server still says token_required even "
+                                        f"with our token. Token may have expired "
+                                        f"(TTL ~5min) or be bound to a different "
+                                        f"session."
+                                    )
+                                else:
+                                    self.log.info(
+                                        f"    attempt {attempt+1}/{max_attempts}: "
+                                        f"server wants Turnstile token. "
+                                        f"Pass one via --turnstile-token <token>."
+                                    )
+                if user_key:
+                    break
 
         # If the server kept refusing, fall back to the cached userKey
         if user_key is None and self.cached_userkey:
@@ -1170,11 +1180,29 @@ class DeepDriver:
             self.log.info(f"    ↻ falling back to cached userKey: {user_key[:16]}…")
 
         if user_key is None:
-            self.log.error(
-                "could not get userKey (server requires Turnstile token "
-                "and no cached userKey is available); skipping generate. "
-                "Wait — the cached userKey should have been tried."
-            )
+            # Pretty error so the user knows exactly what to do
+            self.log.error("=" * 60)
+            self.log.error("could not get userKey — server is asking for")
+            self.log.error("Cloudflare Turnstile proof + cf_clearance cookie")
+            self.log.error("=" * 60)
+            if not self.cf_clearance:
+                self.log.error("STEP 1: open https://image-generation.perchance.org/embed")
+                self.log.error("        in real Chrome. Wait 5s for Turnstile to solve.")
+                self.log.error("STEP 2: DevTools → Application → Cookies → copy")
+                self.log.error("        the cf_clearance value")
+                self.log.error("STEP 3: re-run with --cf-clearance <value>")
+                self.log.error("")
+            if not self.turnstile_token:
+                self.log.error("STEP 4: in the same DevTools → Console, run:")
+                self.log.error("        document.querySelector('[name=\"cf-turnstile-response\"]')?.value")
+                self.log.error("        OR run the bundled helper:")
+                self.log.error("        >>> paste contents of extract_keys.js into Console <<<")
+                self.log.error("STEP 5: re-run with --turnstile-token <token>")
+                self.log.error("")
+            self.log.error("OR: just supply a userKey you already have by writing")
+            self.log.error(".perchance_client/userkeys/current.json with:")
+            self.log.error('  {"userKey": "<64-char-hex>"}')
+            self.log.error("=" * 60)
             return
 
         # 4. Submit generate
@@ -1290,12 +1318,31 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--refresh-token", default=None,
                     help="Path to a file containing a fresh Turnstile token. "
                          "Re-read every iteration so the token never expires.")
+    ap.add_argument("--extract-helper", action="store_true",
+                    help="Print the browser-console JS helper that extracts "
+                         "userKey + cf_clearance + turnstile token from a "
+                         "real Chrome session, then exit.")
+    ap.add_argument("--manual-userkey", default=None,
+                    help="Provide a userKey directly (skips verifyUser entirely). "
+                         "Use this if you have a userKey from a prior run "
+                         "or from another tool.")
     args = ap.parse_args(argv[1:])
 
     # Build the URL with the prompt
     url = args.url
     if args.prompt:
         url = url.split("?")[0] + f"?prompt={args.prompt}"
+
+    if args.extract_helper:
+        try:
+            helper_path = Path(__file__).parent / "extract_keys.js"
+            if helper_path.exists():
+                print(helper_path.read_text(encoding="utf-8"))
+            else:
+                print("(extract_keys.js not found next to deep_logger.py)")
+        except Exception as e:
+            print(f"error: {e}")
+        return 0
 
     log = EventLog(
         html_path=None if args.no_html else Path(args.out),
@@ -1333,6 +1380,7 @@ def main(argv: list[str]) -> int:
                     timeout=args.timeout,
                     turnstile_token=ts_token,
                     cf_clearance=args.cf_clearance,
+                    manual_userkey=args.manual_userkey,
                 )
                 driver.run(
                     url,

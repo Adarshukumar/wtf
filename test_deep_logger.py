@@ -383,6 +383,12 @@ class TestTurnstileSupport(unittest.TestCase):
         d = deep_logger.DeepDriver(log)
         self.assertIsNone(d.turnstile_token)
         self.assertIsNone(d.cf_clearance)
+        self.assertIsNone(d.manual_userkey)
+
+    def test_manual_userkey_init(self):
+        log = deep_logger.EventLog(console=False)
+        d = deep_logger.DeepDriver(log, manual_userkey="a" * 64)
+        self.assertEqual(d.manual_userkey, "a" * 64)
 
     def test_build_session_injects_cf_clearance(self):
         """cf_clearance should be set as a cookie for both perchance.org
