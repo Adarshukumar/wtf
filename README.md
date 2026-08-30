@@ -1,97 +1,92 @@
-# wtf — Perchance userKey extractor
+# Perchance userKey + generate
 
-Mint a Perchance `userKey` the way the real site does it: **Chromium
-(DrissionPage) behind one proxy**, then talk to the image API with
-**curl_cffi** on that same proxy.
+Two jobs, two libraries, one optional proxy:
 
-The captured Chrome HAR `perchance.org.json` is the source of truth for
-the protocol. Walkthrough: [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+| step | tool | what |
+| --- | --- | --- |
+| mint `userKey` | **DrissionPage** (real Chrome) | load `/embed`, **listen** until `/api/verifyUser` returns `success` or `already_verified` |
+| generate image | **curl_cffi** | same IP/proxy, no Chrome |
 
-## Why this shape
-
-| piece | job |
-| --- | --- |
-| Hugging Face proxy miner | `https://adarshu07-no-plz.hf.space` — pool of HTTP/HTTPS/SOCKS5 |
-| DrissionPage | pass Cloudflare, load `/embed`, call `/api/verifyUser` |
-| curl_cffi | Chrome TLS fingerprint for generate / queue / download |
-| SQLite `data/keys.sqlite` | every key stored **with** the proxy that minted it |
-
-`userKey` is IP-sticky. Mixing proxies after minting burns the key.
+Proxies are **fetched** from the miner API. We do not run the miner.
 
 ```
-proxy-miner API  ──►  pick ONE proxy
-                         │
-                         ▼
-              Chromium (DrissionPage)
-              GET image-generation.perchance.org/embed
-              GET /api/verifyUser  ──► userKey
-                         │
-                         ▼
-              curl_cffi Session(proxy=SAME)
-              GET /api/getAccessCodeForAdPoweredStuff
-              POST /api/generate
+https://adarshu07-no-plz.hf.space/api/proxies
 ```
+
+`--no-proxy` skips that and talks to Perchance directly.
+
+## What the HARs show (this is the whole trick)
+
+`generator.har` — first visit, user is **not** verified yet:
+
+```
+GET /api/verifyUser?thread=0
+    {"status":"failed_verification","reason":"token_required"}   ×15
+
+Cloudflare Turnstile (sitekey 0x4AAAAAAAA8g8NphwaSOT59)
+
+GET /api/verifyUser?token=1.<turnstile>&thread=0
+    {"status":"success","userKey":"2c9aff54…cb8b04"}
+
+GET /api/verifyUser?thread=0
+    {"status":"already_verified","userKey":"2c9aff54…cb8b04"}
+```
+
+`prompt.har` — later visit, same key already good:
+
+```
+GET /api/checkUserVerificationStatus?userKey=2c9aff54…   (21 bytes = {"status":"verified"})
+POST /api/generate   channel=imageapi  adAccessCode=<64 hex>
+    {"status":"success","imageId":"…","imageDownloadUrl":"/api/downloadTemporaryImageViaProxy?t=…"}
+    or {"status":"waiting_for_prev_request_to_finish"}
+```
+
+Chrome is required because Turnstile has to run. Headless usually fails it — run headed under Xvfb.
+
+The key is **IP-sticky**. Mint and generate on the same proxy (or both direct).
 
 ## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Chromium/Chrome must be on `PATH` (or set `CHROME_PATH`). Headless is on
-by default; set `PERCHANCE_HEADLESS=0` if Cloudflare challenges you.
-
-```bash
-export PERCHANCE_PROXY_API=https://adarshu07-no-plz.hf.space
+# Chrome/Chromium on PATH. Optional: xvfb-run for a virtual display.
 ```
 
 ## Commands
 
 ```bash
-# reconstruct the protocol from the HAR (no network)
-python -m perchance_key analyze-har
+# mint a key — picks one HTTP proxy from the API
+python -m perchance extract
 
-# control plane
-python -m perchance_key proxy-health
-python -m perchance_key proxy-list --protocol HTTP --limit 20
+# mint with no proxy
+python -m perchance extract --no-proxy
 
-# mint N keys; each key gets a fresh proxy + its own Chrome profile
-python -m perchance_key extract -n 1
-python -m perchance_key extract -n 3 --protocol HTTP --country US
+# mint through a proxy you already have
+python -m perchance extract --proxy http://1.2.3.4:8080
 
-# pin a proxy yourself
-python -m perchance_key extract --proxy http://1.2.3.4:8080
+python -m perchance proxy-list --protocol HTTP
 
-python -m perchance_key keys
-python -m perchance_key generate --prompt "a cute cat"
+# generate (curl_cffi). Reuses the proxy stored with the last key.
+python -m perchance generate --prompt "a cute cat"
+
+python -m perchance generate --prompt "a cute cat" --no-proxy --key <hex>
+
+# both steps, one proxy
+python -m perchance run --prompt "a cute cat"
+python -m perchance run --prompt "a cute cat" --no-proxy
 ```
 
-## Tests
+Keys append to `data/keys.jsonl`. Images go to `output/image.jpg`.
+
+```bash
+# headed Chrome on a machine with no desktop:
+xvfb-run -a python -m perchance extract --no-proxy
+```
+
+## Tests (offline, against the HARs)
 
 ```bash
 pip install pytest
 python -m pytest -q
-```
-
-`tests/test_har.py` replays the 29 MB HAR and asserts the observed
-userKey, adAccessCode, generate body, and endpoint set.
-
-## Layout
-
-```
-perchance_key/
-  config.py       origins, env
-  proxy_api.py    HF space client
-  browser.py      DrissionPage + proxy
-  extractor.py    mint userKey
-  http.py         curl_cffi BoundSession
-  pipeline.py     one proxy → one key
-  store.py        sqlite
-  har.py          HAR → protocol facts
-  parse.py        userKey / adAccessCode
-  cli.py
-docs/PROTOCOL.md
-perchance.org.json
 ```
