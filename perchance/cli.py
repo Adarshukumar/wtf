@@ -73,14 +73,15 @@ def proxy_list(protocol: str, limit: int) -> None:
 @click.option("--protocol", default="HTTP", show_default=True, help="When using --from-api")
 @click.option("--headless", is_flag=True, help="Usually breaks Turnstile. Prefer Xvfb + headed.")
 @click.option("--timeout", default=120, show_default=True, type=float)
-def extract_cmd(no_proxy, proxy, from_api, protocol, headless, timeout):
-    """Open Chromium, wait until verifyUser is success/already_verified, print userKey."""
+@click.option("--prompt", default="a cute booy", show_default=True, help="imageapi ?prompt= — same as the HAR")
+def extract_cmd(no_proxy, proxy, from_api, protocol, headless, timeout, prompt):
+    """Open perchance.org/imageapi, catch userKey from embed iframe network logs."""
     from .extract import extract_user_key
 
     if not no_proxy and not proxy and not from_api:
         from_api = True
     px = _resolve_proxy(proxy, from_api, no_proxy, protocol)
-    rec = extract_user_key(px, headless=headless, timeout=timeout)
+    rec = extract_user_key(px, headless=headless, timeout=timeout, prompt=prompt)
     _save_key(rec)
     click.echo(json.dumps(rec, indent=2))
 
@@ -145,7 +146,7 @@ def run_cmd(prompt, no_proxy, proxy, from_api, protocol, headless, resolution, o
     if not no_proxy and not proxy and not from_api:
         from_api = True
     px = _resolve_proxy(proxy, from_api, no_proxy, protocol)
-    rec = extract_user_key(px, headless=headless)
+    rec = extract_user_key(px, headless=headless, prompt=prompt)
     _save_key(rec)
     click.echo(json.dumps(rec, indent=2), err=True)
 

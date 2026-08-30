@@ -1,17 +1,21 @@
 # Flow reconstructed from generator.har + prompt.har
 
-## Mint (DrissionPage)
+## Mint (DrissionPage) — same URL as the HAR
 
 1. Chromium, optional `--proxy-server`.
-2. `GET https://image-generation.perchance.org/embed#<url-encoded JSON>`
-   Hash **must** include a non-empty `prompt` or embed never calls verifyUser.
-3. Listen:
+2. `GET https://perchance.org/imageapi?prompt=a%20cute%20booy`
+   That is the captured page. It then loads:
+   - `https://{hash}.perchance.org/imageapi?…&prompt=…` (sandbox iframe)
+   - many `https://image-generation.perchance.org/embed#…` iframes
+3. Listen on the tab (covers iframe traffic):
    - ignore `{"status":"failed_verification","reason":"token_required"}`
-   - wait for Turnstile inside the page
+   - Turnstile runs **inside the embed iframe**
    - accept `{"status":"success","userKey":…}` or `already_verified`
-4. Close Chrome. Do not download the image from Chrome.
+   - also catch `userKey=` on `/api/generate` and `/api/checkUserVerificationStatus`
+   - parent origin: `GET /api/getAccessCodeForAdPoweredStuff` → adAccessCode
+4. Close Chrome. Image download is curl_cffi, not Chrome.
 
-`userKey` is also written to `localStorage['userKey-'+thread]`.
+`userKey` is stored on the **embed origin** `localStorage['userKey-'+thread]`, not on perchance.org.
 
 ## Generate (curl_cffi, same IP)
 

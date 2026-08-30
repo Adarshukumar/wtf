@@ -5,6 +5,13 @@ PERCHANCE = "https://perchance.org"
 
 EMBED = f"{IMAGE_GEN}/embed"
 IMAGEAPI = f"{PERCHANCE}/imageapi"
+DEFAULT_PROMPT = "a cute booy"
+
+
+def imageapi_url(prompt: str = DEFAULT_PROMPT) -> str:
+    from urllib.parse import quote
+
+    return f"{IMAGEAPI}?prompt={quote(prompt)}"
 
 VERIFY_USER = f"{IMAGE_GEN}/api/verifyUser"
 CHECK_VERIFIED = f"{IMAGE_GEN}/api/checkUserVerificationStatus"

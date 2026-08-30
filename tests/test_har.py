@@ -28,6 +28,16 @@ def test_files_exist():
     assert GEN.exists() and PROMPT.exists()
 
 
+def test_entry_is_imageapi_not_embed_hash():
+    from perchance.urls import DEFAULT_PROMPT, imageapi_url
+
+    assert imageapi_url() == "https://perchance.org/imageapi?prompt=a%20cute%20booy"
+    assert imageapi_url(DEFAULT_PROMPT).startswith("https://perchance.org/imageapi?prompt=")
+    assert "embed#" not in imageapi_url()
+    pages = json.loads(PROMPT.read_text())["log"]["pages"]
+    assert pages[0]["title"].startswith("https://perchance.org/imageapi?prompt=")
+
+
 def test_verify_user_sequence_in_generator_har():
     bodies = []
     for e in _entries(GEN):

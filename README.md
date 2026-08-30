@@ -4,7 +4,7 @@ Two jobs, two libraries, one optional proxy:
 
 | step | tool | what |
 | --- | --- | --- |
-| mint `userKey` | **DrissionPage** (real Chrome) | load `/embed`, **listen** until `/api/verifyUser` returns `success` or `already_verified` |
+| mint `userKey` | **DrissionPage** (real Chrome) | open `https://perchance.org/imageapi?prompt=…` (same as the HAR). The page boots embed iframes. **Listen** until `/api/verifyUser` is `success` / `already_verified` (or catch `userKey=` on `/api/generate`) |
 | generate image | **curl_cffi** | same IP/proxy, no Chrome |
 
 Proxies are **fetched** from the miner API. We do not run the miner.
@@ -41,7 +41,9 @@ POST /api/generate   channel=imageapi  adAccessCode=<64 hex>
     or {"status":"waiting_for_prev_request_to_finish"}
 ```
 
-Chrome is required because Turnstile has to run. Headless usually fails it — run headed under Xvfb.
+Chrome is required because Turnstile has to run **inside those embed iframes**. Headless usually fails it — run headed under Xvfb.
+
+We never open a hand-built `image-generation.perchance.org/embed#{"prompt":"."…}` URL. Entry is always `perchance.org/imageapi`.
 
 The key is **IP-sticky**. Mint and generate on the same proxy (or both direct).
 
