@@ -1,0 +1,11 @@
+# secrets — never commit these
+.env
+data/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/

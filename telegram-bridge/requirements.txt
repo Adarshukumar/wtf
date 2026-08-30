@@ -1,0 +1,8 @@
+aiogram>=3.4,<4
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+httpx>=0.27,<1
+python-dotenv>=1.0,<2
+
+# Optional: richer heartbeat reports (CPU / RAM / disk usage).
+# psutil>=5.9,<7
