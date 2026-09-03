@@ -71,6 +71,15 @@ try:
 except Exception:
     _CERTIFI_PATH = None
 
+# Optional: EzSolver integration for auto-solving Cloudflare Turnstile
+# https://github.com/ismoiloffS/EzSolver
+try:
+    import turnstile_solver as ts_solver
+    _TS_SOLVER_AVAILABLE = True
+except Exception:
+    ts_solver = None
+    _TS_SOLVER_AVAILABLE = False
+
 
 # =============================================================================
 # Configuration
@@ -834,7 +843,10 @@ class DeepDriver:
     def __init__(self, log: EventLog, *, timeout: float = 20.0,
                  turnstile_token: Optional[str] = None,
                  cf_clearance: Optional[str] = None,
-                 manual_userkey: Optional[str] = None) -> None:
+                 manual_userkey: Optional[str] = None,
+                 use_turnstile_solver: bool = False,
+                 turnstile_sitekey: Optional[str] = None,
+                 solver_url: Optional[str] = None) -> None:
         self.log = log
         self.timeout = timeout
         self.fp = detect_best_fingerprint()
@@ -852,6 +864,43 @@ class DeepDriver:
         self.cf_clearance = cf_clearance
         # If the user already has a userKey, supply it directly.
         self.manual_userkey = manual_userkey
+        # Auto-solve Turnstile via EzSolver HTTP service
+        self.use_turnstile_solver = use_turnstile_solver
+        self.turnstile_sitekey = turnstile_sitekey
+        self.solver_url = solver_url
+
+    def _solve_turnstile_via_service(self) -> Optional[str]:
+        """If --use-turnstile-solver is set, call EzSolver (or compatible)
+        to get a fresh Turnstile token. Returns the token or None on failure."""
+        if not _TS_SOLVER_AVAILABLE:
+            self.log.error("turnstile_solver module not found; did you delete it?")
+            return None
+        # Override the URL if the user provided one
+        if self.solver_url:
+            ts_solver.SOLVER_URL = self.solver_url
+        # First, find the sitekey if we don't have it
+        sitekey = self.turnstile_sitekey
+        if not sitekey:
+            self.log.info("    fetching embed page to extract Turnstile sitekey…")
+            try:
+                r = self.sess.get(EMBED_URL, timeout=20, allow_redirects=True)
+                if r.status_code == 200:
+                    sitekey = ts_solver.find_sitekey(r.text or "")
+            except Exception as e:
+                self.log.error(f"    failed to fetch embed page: {e}")
+        if not sitekey:
+            self.log.error(
+                "    could not find Turnstile sitekey. Pass it via "
+                "--turnstile-sitekey 0x...  (look in the embed page's HTML "
+                "for data-sitekey attribute)."
+            )
+            return None
+        self.log.info(f"    sitekey: {sitekey[:16]}…")
+        # Call the solver
+        token = ts_solver.solve_with_retry(
+            sitekey, EMBED_URL, max_attempts=2, timeout=60
+        )
+        return token
 
     def _build_session(self) -> Any:
         sess = cffi_requests.Session(impersonate=self.fp)
@@ -1164,11 +1213,27 @@ class DeepDriver:
                                         f"(TTL ~5min) or be bound to a different "
                                         f"session."
                                     )
+                                elif self.use_turnstile_solver:
+                                    self.log.info(
+                                        f"    attempt {attempt+1}/{max_attempts}: "
+                                        f"calling EzSolver for fresh Turnstile token…"
+                                    )
+                                    fresh = self._solve_turnstile_via_service()
+                                    if fresh:
+                                        self.turnstile_token = fresh
+                                        self.log.info(
+                                            f"    ← got fresh token: {fresh[:24]}…"
+                                        )
+                                    else:
+                                        self.log.error(
+                                            "    EzSolver failed to produce a token"
+                                        )
                                 else:
                                     self.log.info(
                                         f"    attempt {attempt+1}/{max_attempts}: "
                                         f"server wants Turnstile token. "
-                                        f"Pass one via --turnstile-token <token>."
+                                        f"Pass one via --turnstile-token <token>, "
+                                        f"or run EzSolver (--use-turnstile-solver)."
                                     )
                 if user_key:
                     break
@@ -1326,6 +1391,19 @@ def main(argv: list[str]) -> int:
                     help="Provide a userKey directly (skips verifyUser entirely). "
                          "Use this if you have a userKey from a prior run "
                          "or from another tool.")
+    ap.add_argument("--use-turnstile-solver", action="store_true",
+                    help="Auto-call EzSolver (https://github.com/ismoiloffS/EzSolver) "
+                         "when verifyUser returns token_required. Requires the "
+                         "EzSolver service running on http://127.0.0.1:8191. "
+                         "Solver is REAL Chrome via nodriver — solves Turnstile "
+                         "on demand, returns a fresh token, we retry verifyUser.")
+    ap.add_argument("--turnstile-sitekey", default=None,
+                    help="Cloudflare Turnstile sitekey (saves a fetch). "
+                         "If not given, we extract it from the embed page.")
+    ap.add_argument("--solver-url", default=None,
+                    help="EzSolver service URL (default: "
+                         "http://127.0.0.1:8191/solve, override with "
+                         "TURNSTILE_SOLVER_URL env var)")
     args = ap.parse_args(argv[1:])
 
     # Build the URL with the prompt
@@ -1381,6 +1459,9 @@ def main(argv: list[str]) -> int:
                     turnstile_token=ts_token,
                     cf_clearance=args.cf_clearance,
                     manual_userkey=args.manual_userkey,
+                    use_turnstile_solver=args.use_turnstile_solver,
+                    turnstile_sitekey=args.turnstile_sitekey,
+                    solver_url=args.solver_url,
                 )
                 driver.run(
                     url,
